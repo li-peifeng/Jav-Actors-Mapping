@@ -1,4 +1,14 @@
-# Jav Actors Mapping
+<p align="center">
+  <a href="https://peifeng.li"><img width="184px" alt="logo" src="public/logo.svg" />
+  </a>
+</p>
+<p align="center">
+  <a href="https://hub.docker.com/r/leolitaly/avdb">
+    <img src="https://img.shields.io/docker/pulls/leolitaly/avdb?color=#48BB78&logo=docker&label=pulls" alt="Downloads" />
+  </a>
+</p>
+
+# Jav Actors Mapping For AVdb
 
 ## 项目说明
 
