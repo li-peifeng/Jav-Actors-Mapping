@@ -22,6 +22,8 @@
 ## 仓库结构
 
 - actor-mapping.xml：演员映射数据文件（XML 格式）。
+- scripts/format_actor_mapping.py：映射格式化与校验脚本（natural 排序、转译字符串检查）。
+- .github/workflows/actor-mapping-format.yml：自动化格式化与校验工作流。
 
 ## 贡献流程
 
@@ -36,6 +38,31 @@
 
 - 合并请求通过后，相关更新可直接推送到 AVdb。
 - 如果审核中提出修改意见，请按意见补充后再次提交。
+
+## 自动化 Actions
+
+仓库已配置 actor-mapping.xml 的自动格式化与校验流程：
+
+1. 当 push 或 pull request 涉及 actor-mapping.xml 时，工作流会自动触发。
+2. pull request 场景执行严格校验：
+  - 对 <actor></actor> 内的 <a ... /> 条目进行 natural 排序。
+  - 统一属性顺序为 zh_cn、zh_tw、jp、keyword、tmdb_id（其他属性按名称追加）。
+  - 检查并清理多余转译字符串（例如重复实体转义、数字实体转义、可疑反斜杠转义串）。
+3. push 场景自动执行格式化，并在 actor-mapping.xml 有变更时自动提交回当前分支。
+
+### 本地预检查
+
+提交前建议先执行：
+
+```bash
+python scripts/format_actor_mapping.py --check actor-mapping.xml
+```
+
+如需本地直接格式化：
+
+```bash
+python scripts/format_actor_mapping.py --write actor-mapping.xml
+```
 
 ## 提交建议
 

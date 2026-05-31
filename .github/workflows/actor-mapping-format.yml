@@ -1,0 +1,59 @@
+name: Actor Mapping Format
+
+on:
+  push:
+    paths:
+      - actor-mapping.xml
+      - scripts/format_actor_mapping.py
+      - .github/workflows/actor-mapping-format.yml
+  pull_request:
+    paths:
+      - actor-mapping.xml
+      - scripts/format_actor_mapping.py
+      - .github/workflows/actor-mapping-format.yml
+
+permissions:
+  contents: write
+
+jobs:
+  check-on-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Check format and escaped strings
+        run: python scripts/format_actor_mapping.py --check actor-mapping.xml
+
+  auto-format-on-push:
+    if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Apply format and escaped-string cleanup
+        run: python scripts/format_actor_mapping.py --write --check actor-mapping.xml
+
+      - name: Auto commit if actor-mapping.xml changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore: auto-format actor-mapping.xml'
+          file_pattern: actor-mapping.xml
