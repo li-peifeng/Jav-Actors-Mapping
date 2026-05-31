@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize actor-mapping.xml by sorting <a> entries and checking escaped strings."""
+"""Normalize actor-mapping.xml by sorting <a> entries and checking escaped strings. AVdb 1.0.0"""
 
 from __future__ import annotations
 
