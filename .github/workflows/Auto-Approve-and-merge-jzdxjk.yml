@@ -23,11 +23,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Approve and merge pull request
+        id: merge
         uses: actions/github-script@v7
         with:
           script: |
             const trustedContributor = 'jzdxjk'
-            const allowedFiles = new Set(['actor-mapping.xml'])
+            const allowedFiles = new Set(['actor-mapping.xml', 'mapping_actor.xml'])
 
             async function getPullRequest() {
               if (context.eventName === 'pull_request_target') {
@@ -97,7 +98,7 @@ jobs:
 
             core.info(`Changed files: ${changedFiles.join(', ')}`)
             if (!onlyAllowedFiles) {
-              core.info('PR changes files outside actor-mapping.xml; skipping.')
+              core.info('PR changes files outside actor-mapping.xml and mapping_actor.xml; skipping.')
               return
             }
 
@@ -107,7 +108,7 @@ jobs:
                 repo: context.repo.repo,
                 pull_number: pullRequest.number,
                 event: 'APPROVE',
-                body: 'Automatically approved trusted contributor jzdxjk for actor-mapping.xml-only changes.'
+                body: 'Automatically approved trusted contributor jzdxjk for actor mapping XML changes.'
               })
             } catch (error) {
               if (error.status === 422) {
@@ -123,13 +124,16 @@ jobs:
             }
 
             try {
-              await github.rest.pulls.merge({
+              const { data: mergeResult } = await github.rest.pulls.merge({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: pullRequest.number,
                 merge_method: 'squash',
                 sha: pullRequest.head.sha
               })
+              if (mergeResult.merged) {
+                core.setOutput('base_ref', pullRequest.base.ref)
+              }
             } catch (error) {
               if ([405, 409].includes(error.status)) {
                 core.info(`Merge skipped: ${error.message}`)
@@ -138,3 +142,34 @@ jobs:
 
               throw error
             }
+
+      # GITHUB_TOKEN merges do not trigger the push formatting workflow.
+      # Work on the merged base branch, without writing to the contributor's fork.
+      - name: Checkout merged branch
+        if: steps.merge.outputs.base_ref != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.merge.outputs.base_ref }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        if: steps.merge.outputs.base_ref != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install formatter dependencies
+        if: steps.merge.outputs.base_ref != ''
+        run: python -m pip install --upgrade pip pypinyin
+
+      - name: Format source and synchronize simplified mapping
+        if: steps.merge.outputs.base_ref != ''
+        run: python scripts/format_actor_mapping.py --write --check actor-mapping.xml
+
+      - name: Commit synchronized mapping
+        if: steps.merge.outputs.base_ref != ''
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          branch: ${{ steps.merge.outputs.base_ref }}
+          commit_message: 'chore: format actor mapping and sync simplified mapping'
+          file_pattern: actor-mapping.xml mapping_actor.xml

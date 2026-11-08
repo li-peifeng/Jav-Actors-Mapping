@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize actor-mapping.xml by sorting entries, blacklist, and escaped strings. AVdb 1.0.1"""
+"""Normalize actor-mapping.xml and synchronize its simplified mapping_actor.xml."""
 
 from __future__ import annotations
 import argparse
@@ -15,6 +15,7 @@ from xml.sax.saxutils import escape as xml_escape
 from pypinyin import Style, lazy_pinyin
 
 XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
+SIMPLIFIED_ATTR_ORDER: Sequence[str] = ("zh_cn", "zh_tw", "jp", "keyword")
 PREFERRED_ATTR_ORDER: Sequence[str] = (
     "zh_cn",
     "zh_tw",
@@ -60,12 +61,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Fail if formatting or escape checks are not satisfied.",
+        help="Fail if formatting, escape checks, or mapping_actor.xml synchronization fail.",
     )
     parser.add_argument(
         "--write",
         action="store_true",
-        help="Write normalized XML content back to file.",
+        help="Write normalized XML and synchronize the sibling mapping_actor.xml for actor-mapping.xml.",
     )
     parser.add_argument(
         "--adult-person-ids",
@@ -421,6 +422,21 @@ def find_suspicious_escapes(text: str) -> List[Tuple[int, str]]:
     return issues
 
 
+def build_simplified_xml(normalized_xml: str) -> str:
+    """Project normalized entries into the existing name-and-alias-only format."""
+    actor_node = get_actor_node(ET.fromstring(normalized_xml))
+    lines = [XML_DECLARATION, "<actor>"]
+    for entry in actor_node:
+        attributes = []
+        for key in SIMPLIFIED_ATTR_ORDER:
+            if key in entry.attrib:
+                escaped = xml_escape(entry.attrib[key], {'"': "&quot;"})
+                attributes.append(f'{key}="{escaped}"')
+        lines.append(f"  <a {' '.join(attributes)} />")
+    lines.append("</actor>")
+    return "\n".join(lines) + "\n"
+
+
 def print_suspicious_issues(issues: Iterable[Tuple[int, str]]) -> None:
     issues_list = list(issues)
     if not issues_list:
@@ -466,6 +482,15 @@ def main() -> int:
         return 1
 
     has_format_diff = normalized_xml != normalized_original
+    simplified_path = xml_path.with_name("mapping_actor.xml")
+    simplified_xml: str | None = None
+    has_simplified_diff = False
+    if xml_path.name == "actor-mapping.xml":
+        simplified_xml = build_simplified_xml(normalized_xml)
+        has_simplified_diff = (
+            not simplified_path.exists()
+            or simplified_path.read_bytes() != simplified_xml.encode("utf-8")
+        )
 
     if args.write and has_format_diff:
         xml_path.write_text(normalized_xml, encoding="utf-8", newline="\n")
@@ -473,12 +498,19 @@ def main() -> int:
     elif has_format_diff:
         print(f"Formatting required: {xml_path}")
 
+    if simplified_xml is not None and has_simplified_diff:
+        if args.write:
+            simplified_path.write_text(simplified_xml, encoding="utf-8", newline="\n")
+            print(f"Updated {simplified_path}")
+        elif args.check:
+            print(f"Synchronization required: {simplified_path}")
+
     # Check escaped strings against normalized output to avoid false positives from formatting.
     suspicious_issues = find_suspicious_escapes(normalized_xml)
     print_suspicious_issues(suspicious_issues)
 
     if args.check:
-        format_failed = has_format_diff and not args.write
+        format_failed = (has_format_diff or has_simplified_diff) and not args.write
         if format_failed or suspicious_issues:
             return 1
 

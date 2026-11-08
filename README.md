@@ -23,7 +23,8 @@
 ## 仓库结构
 
 - actor-mapping.xml：演员映射数据文件（XML 格式）。
-- scripts/format_actor_mapping.py：映射格式化与校验脚本（natural 排序、转译字符串检查）。
+- mapping_actor.xml：自动生成的精简映射表，根节点为 actor，仅保留 zh_cn、zh_tw、jp、keyword，使用两空格缩进，不包含外部 ID、简介、其他属性和黑名单。请维护源文件，不要手工修改此文件。
+- scripts/format_actor_mapping.py：映射格式化与校验脚本（natural 排序、转译字符串检查、同步精简映射表）。
 - .github/workflows/actor-mapping-format.yml：自动化格式化与校验工作流。
 
 ## 贡献流程
@@ -44,12 +45,15 @@
 
 仓库已配置 actor-mapping.xml 的自动格式化与校验流程：
 
-1. 当 push 或 pull request 涉及 actor-mapping.xml 时，工作流会自动触发。
+1. 当 push 或 pull request 涉及任一 XML、格式化脚本或对应工作流时，工作流会自动触发。
 2. pull request 场景执行严格校验：
   - 对 actor 内的条目进行 natural 排序。
   - 统一属性顺序为 zh_cn、zh_tw、jp、keyword、tmdb_id（其他属性按名称追加）。
   - 检查并清理多余转译字符串（例如重复实体转义、数字实体转义、可疑反斜杠转义串）。
-3. push 场景自动执行格式化，并在 actor-mapping.xml 有变更时自动提交回当前分支。
+  - 在工作区生成精简表，并检查源文件是否已规范格式化；贡献者只需修改 actor-mapping.xml，无需手工同步精简表。
+3. push 场景自动执行格式化，并同步生成 mapping_actor.xml；任一 XML 有变更时，将两个文件的变更一并自动提交回当前分支。
+
+`jzdxjk` 的自动审批与合并允许 PR 修改 actor-mapping.xml、mapping_actor.xml 中的任一文件或两者，但不允许夹带其他文件。贡献者仍可只提交源文件；自动合并成功后，工作流会在合并目标分支直接同步精简表并提交，无需向贡献者的 Fork 写入文件，也无需贡献者拥有本仓库的写权限。
 
 ### 本地预检查
 
@@ -65,6 +69,8 @@ python scripts/format_actor_mapping.py --check actor-mapping.xml
 ```bash
 python scripts/format_actor_mapping.py --write actor-mapping.xml
 ```
+
+`--write` 会同时更新源文件所在目录下的 mapping_actor.xml，即使源文件已经符合格式，也会补建或更新精简表。`--check` 会检查源文件格式、转义字符串及精简表是否同步；需要同步时先执行上述 `--write` 命令再检查。
 
 ## 提交建议
 
