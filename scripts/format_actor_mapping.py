@@ -21,6 +21,7 @@ PREFERRED_ATTR_ORDER: Sequence[str] = (
     "zh_tw",
     "jp",
     "keyword",
+    "page_id",
     "tmdb_id",
     "dackdrop",
     "bio_graphy",
@@ -369,6 +370,21 @@ def validate_unique_tmdb_ids(root: ET.Element) -> None:
     raise ValueError(f"Duplicate tmdb_id values found; tmdb_id must be unique:\n{details}")
 
 
+def validate_page_ids(root: ET.Element) -> None:
+    """JavDB page identities are case-sensitive short IDs, never URLs or DB IDs."""
+    owners: Dict[str, str] = {}
+    for entry in root:
+        if entry.tag != "a" or "page_id" not in entry.attrib:
+            continue
+        page_id = entry.attrib["page_id"]
+        name = entry_display_name(entry.attrib)
+        if not re.fullmatch(r"[A-Za-z0-9]{1,120}", page_id):
+            raise ValueError(f"Invalid page_id={page_id!r} for {name}; use a 1-120 character alphanumeric short ID.")
+        if page_id in owners:
+            raise ValueError(f"Duplicate page_id={page_id}: {owners[page_id]}, {name}; page_id must be unique.")
+        owners[page_id] = name
+
+
 def sort_key_for_entry(attributes: Dict[str, str], rendered_line: str) -> SortKey:
     return (
         (script_bucket_for_text(attributes.get("zh_cn", "")), natural_key(attributes.get("zh_cn", ""))),
@@ -393,6 +409,7 @@ def build_normalized_xml(raw_xml: str, person_ids: List[Dict[str, str]] | None =
         merge_person_ids(actor_node, person_ids)
 
     validate_unique_tmdb_ids(actor_node)
+    validate_page_ids(actor_node)
 
     rendered_entries: List[Tuple[SortKey, str]] = []
 

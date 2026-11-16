@@ -8,3 +8,4 @@ __pycache__
 *.env
 *.DS_Store
 *.json
+tests/test_mapping.py

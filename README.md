@@ -25,6 +25,9 @@
 - actor-mapping.xml：演员映射数据文件（XML 格式）。
 - mapping_actor.xml：自动生成的精简映射表，根节点为 actor，仅保留 zh_cn、zh_tw、jp、keyword，使用两空格缩进，不包含外部 ID、简介、其他属性和黑名单。请维护源文件，不要手工修改此文件。
 - scripts/format_actor_mapping.py：映射格式化与校验脚本（natural 排序、转译字符串检查、同步精简映射表）。
+- scripts/merge_avdb_mapping.py：只读合并 AVDB 数据库、导出 XML/JSON、旧映射 XML 和演员采集 JSON，支持预览、覆盖检查与合并报告。
+- scripts/resolve_duplicate_person_ids.py：补充 TMDB 重名演员，支持完整 XML 的嵌套结构，写入时同步精简表。
+- tests/test_mapping.py：页面 ID、合并、来源覆盖与精简表同步的回归测试。
 - .github/workflows/actor-mapping-format.yml：自动化格式化与校验工作流。
 
 ## 贡献流程
@@ -48,7 +51,8 @@
 1. 当 push 或 pull request 涉及任一 XML、格式化脚本或对应工作流时，工作流会自动触发。
 2. pull request 场景执行严格校验：
   - 对 actor 内的条目进行 natural 排序。
-  - 统一属性顺序为 zh_cn、zh_tw、jp、keyword、tmdb_id（其他属性按名称追加）。
+  - 统一属性顺序为 zh_cn、zh_tw、jp、keyword、page_id、tmdb_id（简介等属性随后排列）。
+  - 检查 page_id 格式，以及 page_id、tmdb_id 的唯一性。
   - 检查并清理多余转译字符串（例如重复实体转义、数字实体转义、可疑反斜杠转义串）。
   - 在工作区生成精简表，并检查源文件是否已规范格式化；贡献者只需修改 actor-mapping.xml，无需手工同步精简表。
 3. push 场景自动执行格式化，并同步生成 mapping_actor.xml；任一 XML 有变更时，将两个文件的变更一并自动提交回当前分支。
@@ -71,6 +75,37 @@ python scripts/format_actor_mapping.py --write actor-mapping.xml
 ```
 
 `--write` 会同时更新源文件所在目录下的 mapping_actor.xml，即使源文件已经符合格式，也会补建或更新精简表。`--check` 会检查源文件格式、转义字符串及精简表是否同步；需要同步时先执行上述 `--write` 命令再检查。
+
+### 演员页面 ID
+
+完整表中的可选属性 `page_id` 对应 JavDB 演员页面短 ID。例如页面 `https://javdb.com/actors/k2Ne` 对应 `page_id="k2Ne"`。它与 AVDB 数据库内的数字主键 `id`、TMDB 的 `tmdb_id` 分别独立，不保存完整链接。
+
+- 仅允许 1 至 120 位英文字母或数字，区分大小写；同一页面 ID 只能出现在一条演员记录中。
+- 未知时省略属性，不填写空字符串、完整 URL 或占位值。
+- `mapping_actor.xml` 继续仅保留四个名称/别名字段，不包含页面 ID；需要页面 ID 时读取完整表。
+
+### 合并 AVDB 与其他映射来源
+
+先预览，确认报告后使用同一命令加 `--write` 写入：
+
+```bash
+python scripts/merge_avdb_mapping.py /path/to/avdb.db /path/to/legacy-mapping.xml /path/to/actor-all.json
+python scripts/merge_avdb_mapping.py /path/to/avdb.db /path/to/legacy-mapping.xml /path/to/actor-all.json --write
+python scripts/format_actor_mapping.py --check actor-mapping.xml
+python -m unittest discover -s tests -v
+```
+
+来源也可以是 AVDB 导出的完整 XML 或页面 ID JSON。数据库使用只读连接，并沿用 AVDB 导出范围，排除 Emby 和 external 来源的演员；不会修改数据库或传入的文件。预览只写报告，默认位置为 `.cache/avdb-merge-report.json`，可用 `--report` 指定。`--xml` 可指定待合并的源表路径。
+
+合并规则：
+
+- 保留仓库已有名称和非空资料，补齐缺失字段，并将来源中的其他名称与别名加入 `keyword`；不删除已有演员或别名。
+- 优先按页面 ID、TMDB ID、完整主名组合、主名和别名依次匹配，名称采用逐项精确比较。
+- 不同的已知页面 ID 或 TMDB ID 不因共用别名而合并。归属不明确的记录保留为独立条目，并写入报告；不根据遍历顺序猜测演员。
+- 旧 XML 的标准 JavDB `href` 会转换为 `page_id`；`actor-all.json` 的 `id` 只有与标准 `href` 一致时才作为页面 ID。其他网站或格式错误的链接只记录到报告，保留演员资料，不猜测 ID。主名字段中误填的逗号分隔别名会拆分保留。
+- 所有来源先完成格式、ID 唯一性和覆盖检查，要求原表及每个来源的有效 ID、名称、别名均在结果中保留，才写入两个 XML。重复合并相同来源不应增加记录。
+
+Actions 会在映射文件、`scripts/` 或 `tests/` 变更时运行回归测试，并继续自动生成精简表。受信任贡献者的自动审批文件白名单仍限于两份 XML。
 
 ## 提交建议
 
@@ -112,7 +147,7 @@ python scripts/format_actor_mapping.py --write actor-mapping.xml
 ### 2. 条目结构要求
 
 1. 每条记录使用自闭合标签：<a ... />。
-2. 建议属性顺序固定为：zh_cn、zh_tw、jp、keyword、tmdb_id（可选）。
+2. 建议属性顺序固定为：zh_cn、zh_tw、jp、keyword、page_id（可选）、tmdb_id（可选）。
 3. zh_cn、zh_tw、jp 三个字段应填写演员对应名称；缺失信息时应在合并请求中说明。
 4. keyword 使用英文逗号分隔多个别名，不加空格，例如：keyword="别名A,別名A,AliasA"。
 5. keyword 内避免重复词；避免首尾逗号；避免连续逗号。
@@ -133,4 +168,10 @@ python scripts/format_actor_mapping.py --write actor-mapping.xml
 
 ```xml
 <a zh_cn="中文简体名" zh_tw="中文繁体名" jp="日文名" keyword="别名1,別名1,Alias1" tmdb_id="123456" />
+```
+
+同时附加 JavDB 页面 ID：
+
+```xml
+<a zh_cn="中文简体名" zh_tw="中文繁体名" jp="日文名" keyword="别名1,別名1,Alias1" page_id="k2Ne" tmdb_id="123456" />
 ```

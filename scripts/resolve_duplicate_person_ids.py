@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
+from format_actor_mapping import build_normalized_xml, build_simplified_xml, get_actor_node
+
 
 TMDB_API_BASE = "https://api.themoviedb.org/3"
 
@@ -75,7 +77,7 @@ def load_person_id_groups(path: Path) -> dict[str, set[str]]:
 def collect_xml_names(path: Path) -> set[str]:
     root = ET.fromstring(path.read_text(encoding="utf-8"))
     names: set[str] = set()
-    for child in root:
+    for child in get_actor_node(root):
         if child.tag != "a":
             continue
         for attr in ("zh_cn", "zh_tw", "jp"):
@@ -233,15 +235,17 @@ def render_entry(name: str, person_id: str) -> str:
 
 
 def append_entries(xml_path: Path, entries: list[tuple[str, str]]) -> None:
-    lines = xml_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    insert_at = next(
-        (index for index in range(len(lines) - 1, -1, -1) if lines[index].strip() == "</actor>"),
-        None,
-    )
-    if insert_at is None:
-        raise RuntimeError("Cannot find </actor> closing tag.")
-    lines[insert_at:insert_at] = [render_entry(name, person_id) for name, person_id in entries]
-    xml_path.write_text("".join(lines), encoding="utf-8")
+    root = ET.fromstring(xml_path.read_text(encoding="utf-8"))
+    actor = get_actor_node(root)
+    for name, person_id in entries:
+        ET.SubElement(actor, "a", zh_cn=name, zh_tw=name, jp=name,
+                      keyword=name, tmdb_id=person_id)
+    # Validate IDs and normalize everything before touching either output.
+    normalized = build_normalized_xml(ET.tostring(root, encoding="unicode"))
+    simplified = build_simplified_xml(normalized)
+    xml_path.write_text(normalized, encoding="utf-8")
+    if xml_path.name == "actor-mapping.xml":
+        xml_path.with_name("mapping_actor.xml").write_text(simplified, encoding="utf-8")
 
 
 def main() -> int:

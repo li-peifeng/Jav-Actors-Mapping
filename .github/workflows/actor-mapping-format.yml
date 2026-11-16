@@ -5,13 +5,15 @@ on:
     paths:
       - actor-mapping.xml
       - mapping_actor.xml
-      - scripts/format_actor_mapping.py
+      - scripts/**
+      - tests/**
       - .github/workflows/actor-mapping-format.yml
   pull_request:
     paths:
       - actor-mapping.xml
       - mapping_actor.xml
-      - scripts/format_actor_mapping.py
+      - scripts/**
+      - tests/**
       - .github/workflows/actor-mapping-format.yml
 
 permissions:
@@ -34,6 +36,9 @@ jobs:
 
       - name: Install formatter dependencies
         run: python -m pip install --upgrade pip pypinyin
+
+      - name: Test mapping identities and merge coverage
+        run: python -m unittest discover -s tests -v
 
       - name: Check source format and generate simplified mapping
         # Contributors only maintain the source; push commits the generated file.
@@ -59,6 +64,9 @@ jobs:
 
       - name: Install formatter dependencies
         run: python -m pip install --upgrade pip pypinyin
+
+      - name: Test mapping identities and merge coverage
+        run: python -m unittest discover -s tests -v
 
       - name: Format source and synchronize simplified mapping
         run: python scripts/format_actor_mapping.py --write --check actor-mapping.xml
