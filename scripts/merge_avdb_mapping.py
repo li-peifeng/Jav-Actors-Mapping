@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 from format_actor_mapping import (
     build_normalized_xml, build_simplified_xml, collect_blacklist_values,
     find_suspicious_escapes, get_actor_node,
-    validate_page_ids, validate_unique_tmdb_ids,
+    validate_page_ids, validate_unique_tmdb_ids, validate_unique_actor_names,
 )
 
 NAME_FIELDS = ("zh_cn", "zh_tw", "jp")
@@ -295,6 +295,7 @@ def main() -> int:
         actor = get_actor_node(root)
         validate_page_ids(actor)
         validate_unique_tmdb_ids(actor)
+        validate_unique_actor_names(actor)
         entries = [dict(entry.attrib) for entry in actor]
         originals = [dict(entry) for entry in entries]
         reports = []

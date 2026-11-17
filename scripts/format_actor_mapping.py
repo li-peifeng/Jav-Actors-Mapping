@@ -385,6 +385,35 @@ def validate_page_ids(root: ET.Element) -> None:
         owners[page_id] = name
 
 
+def validate_unique_actor_names(root: ET.Element) -> None:
+    """Each primary name belongs to one row, including cross-field matches.
+
+    Repeating a name in multiple language fields of the same row is valid.
+    Match AVDB's case-insensitive name lookup after output normalization.
+    Keywords remain aliases and are not unique identifiers.
+    """
+    owners: Dict[str, Tuple[int, str]] = {}
+    duplicates: List[str] = []
+    for index, entry in enumerate(root, start=1):
+        if entry.tag != "a":
+            continue
+        for field in SIMPLIFIED_ATTR_ORDER[:3]:
+            value = normalize_attribute_value(entry.get(field, ""))
+            if not value:
+                continue
+            key = value.casefold()
+            previous = owners.get(key)
+            if previous is not None and previous[0] != index:
+                duplicates.append(f"  {value!r}: entry {previous[0]} ({previous[1]}) and entry {index} ({field})")
+            else:
+                owners.setdefault(key, (index, field))
+    if duplicates:
+        preview = "\n".join(duplicates[:20])
+        if len(duplicates) > 20:
+            preview += f"\n  ... and {len(duplicates) - 20} more"
+        raise ValueError(f"Duplicate actor names found; zh_cn, zh_tw and jp must be unique across entries:\n{preview}")
+
+
 def sort_key_for_entry(attributes: Dict[str, str], rendered_line: str) -> SortKey:
     return (
         (script_bucket_for_text(attributes.get("zh_cn", "")), natural_key(attributes.get("zh_cn", ""))),
@@ -410,6 +439,7 @@ def build_normalized_xml(raw_xml: str, person_ids: List[Dict[str, str]] | None =
 
     validate_unique_tmdb_ids(actor_node)
     validate_page_ids(actor_node)
+    validate_unique_actor_names(actor_node)
 
     rendered_entries: List[Tuple[SortKey, str]] = []
 

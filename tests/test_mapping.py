@@ -18,6 +18,51 @@ def row(name, **kwargs):
 
 
 class MappingTests(unittest.TestCase):
+    def test_primary_names_are_unique_across_rows_and_language_fields(self):
+        for first in ("zh_cn", "zh_tw", "jp"):
+            for second in ("zh_cn", "zh_tw", "jp"):
+                with self.subTest(first=first, second=second):
+                    with self.assertRaisesRegex(ValueError, "Duplicate actor names"):
+                        build_normalized_xml(f'<actor><a {first}="重名" page_id="One"/><a {second}="重名" page_id="Two"/></actor>')
+
+    def test_same_row_names_and_shared_keywords_are_allowed(self):
+        build_normalized_xml('<actor><a zh_cn="甲" zh_tw="甲" jp="甲" keyword="共用别名"/><a zh_cn="乙" keyword="甲,共用别名"/></actor>')
+
+    def test_name_uniqueness_uses_rendered_values_and_casefold(self):
+        for first, second in ((" RINA ", "rina"), ("A&amp;amp;B", "A&amp;B")):
+            with self.subTest(first=first, second=second):
+                with self.assertRaisesRegex(ValueError, "Duplicate actor names"):
+                    build_normalized_xml(f'<actor><a zh_cn="{first}"/><a jp="{second}"/></actor>')
+
+    def test_name_conflict_never_overwrites_either_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "actor-mapping.xml"
+            simple = path.with_name("mapping_actor.xml")
+            path.write_text('<actor><a zh_cn="甲" page_id="One"/><a jp="甲" page_id="Two"/></actor>')
+            simple.write_text("unchanged")
+            before = path.read_bytes(), simple.read_bytes()
+            result = subprocess.run([sys.executable, "scripts/format_actor_mapping.py", "--write", str(path)], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"Duplicate actor names", result.stdout)
+            self.assertEqual((path.read_bytes(), simple.read_bytes()), before)
+
+    def test_merge_rejects_same_name_distinct_ids_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "actor-mapping.xml"
+            simple = path.with_name("mapping_actor.xml")
+            source = path.with_name("source.xml")
+            path.write_text('<actor><a zh_cn="同名" page_id="One" tmdb_id="1"/></actor>')
+            simple.write_text("unchanged")
+            source.write_text('<actor><a jp="同名" page_id="Two" tmdb_id="2"/></actor>')
+            before = path.read_bytes(), simple.read_bytes()
+            result = subprocess.run([
+                sys.executable, "scripts/merge_avdb_mapping.py", str(source), "--xml", str(path),
+                "--report", str(path.with_name("report.json")), "--write",
+            ], capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b"Duplicate actor names", result.stderr)
+            self.assertEqual((path.read_bytes(), simple.read_bytes()), before)
+
     def test_page_ids_preserved_in_full_mapping_only(self):
         full = build_normalized_xml('<actor><a zh_cn="演员" keyword="A&amp;B" page_id="k2Ne" tmdb_id="12"/></actor>')
         self.assertEqual(ET.fromstring(full).find(".//a").get("page_id"), "k2Ne")
