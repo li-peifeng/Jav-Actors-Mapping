@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalize actor-mapping.xml and synchronize its simplified mapping_actor.xml."""
+"""Normalize and validate actor-mapping.xml."""
 
 from __future__ import annotations
 import argparse
@@ -15,7 +15,7 @@ from xml.sax.saxutils import escape as xml_escape
 from pypinyin import Style, lazy_pinyin
 
 XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
-SIMPLIFIED_ATTR_ORDER: Sequence[str] = ("zh_cn", "zh_tw", "jp", "keyword")
+NAME_FIELDS: Sequence[str] = ("zh_cn", "zh_tw", "jp")
 PREFERRED_ATTR_ORDER: Sequence[str] = (
     "zh_cn",
     "zh_tw",
@@ -30,6 +30,10 @@ SUSPICIOUS_ESCAPE_RE = re.compile(
     r"(\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2}|\\[nrtfv]|&amp;(?:amp|lt|gt|quot|apos);|&#x[0-9a-fA-F]+;|&#\d+;)"
 )
 DIGIT_SPLIT_RE = re.compile(r"(\d+)")
+ACTOR_TEXT_TRANSLATION = str.maketrans({
+    **dict.fromkeys("\u200b\u200c\u200d\u200e\u200f\ufeff\u2060\u00ad"),
+    "\u00a0": " ",
+})
 
 EncodedTextPart: TypeAlias = Tuple[int, ...]
 TextCharKey: TypeAlias = Tuple[int, EncodedTextPart, int]
@@ -62,12 +66,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Fail if formatting, escape checks, or mapping_actor.xml synchronization fail.",
+        help="Fail if formatting or escape checks fail.",
     )
     parser.add_argument(
         "--write",
         action="store_true",
-        help="Write normalized XML and synchronize the sibling mapping_actor.xml for actor-mapping.xml.",
+        help="Write normalized XML.",
     )
     parser.add_argument(
         "--adult-person-ids",
@@ -207,7 +211,7 @@ def normalize_attribute_value(value: str) -> str:
     # Keep each XML record single-line by stripping hard line/control chars.
     decoded = decoded.replace("\r", "").replace("\n", "").replace("\t", "")
     decoded = re.sub(r"[\x00-\x1F\x7F]", "", decoded)
-    return decoded.strip()
+    return decoded.translate(ACTOR_TEXT_TRANSLATION).strip()
 
 
 def render_entry(attributes: Dict[str, str]) -> str:
@@ -286,7 +290,7 @@ def load_person_ids(file_path: Path) -> List[Dict[str, str]]:
 
 
 def split_keyword_values(keyword_value: str) -> List[str]:
-    return [value.strip() for value in keyword_value.split(",") if value.strip()]
+    return [name for value in keyword_value.split(",") if (name := normalize_attribute_value(value))]
 
 
 def merge_person_ids(root: ET.Element, person_ids: List[Dict[str, str]]) -> List[Tuple[str, str, str, str]]:
@@ -297,7 +301,7 @@ def merge_person_ids(root: ET.Element, person_ids: List[Dict[str, str]]) -> List
         if child.tag != "a":
             continue
         for field in ("zh_cn", "zh_tw", "jp"):
-            field_value = child.attrib.get(field, "").strip()
+            field_value = normalize_attribute_value(child.attrib.get(field, ""))
             if field_value:
                 exact_index.setdefault(field_value, child)
         keywords = split_keyword_values(child.attrib.get("keyword", ""))
@@ -306,7 +310,7 @@ def merge_person_ids(root: ET.Element, person_ids: List[Dict[str, str]]) -> List
 
     changes: List[Tuple[str, str, str, str]] = []
     for person in person_ids:
-        name = person["name"]
+        name = normalize_attribute_value(person["name"])
         person_id = person["id"]
         entry = exact_index.get(name)
         match_kind = "exact"
@@ -397,7 +401,7 @@ def validate_unique_actor_names(root: ET.Element) -> None:
     for index, entry in enumerate(root, start=1):
         if entry.tag != "a":
             continue
-        for field in SIMPLIFIED_ATTR_ORDER[:3]:
+        for field in NAME_FIELDS:
             value = normalize_attribute_value(entry.get(field, ""))
             if not value:
                 continue
@@ -449,7 +453,8 @@ def build_normalized_xml(raw_xml: str, person_ids: List[Dict[str, str]] | None =
 
         attrs = dict(child.attrib)
         rendered_line = render_entry(attrs)
-        rendered_entries.append((sort_key_for_entry(attrs, rendered_line), rendered_line))
+        sort_attrs = {key: value.translate(ACTOR_TEXT_TRANSLATION) for key, value in attrs.items()}
+        rendered_entries.append((sort_key_for_entry(sort_attrs, rendered_line), rendered_line))
 
     rendered_entries.sort(key=lambda item: item[0])
 
@@ -467,21 +472,6 @@ def find_suspicious_escapes(text: str) -> List[Tuple[int, str]]:
         for match in SUSPICIOUS_ESCAPE_RE.finditer(line):
             issues.append((line_number, match.group(0)))
     return issues
-
-
-def build_simplified_xml(normalized_xml: str) -> str:
-    """Project normalized entries into the existing name-and-alias-only format."""
-    actor_node = get_actor_node(ET.fromstring(normalized_xml))
-    lines = [XML_DECLARATION, "<actor>"]
-    for entry in actor_node:
-        attributes = []
-        for key in SIMPLIFIED_ATTR_ORDER:
-            if key in entry.attrib:
-                escaped = xml_escape(entry.attrib[key], {'"': "&quot;"})
-                attributes.append(f'{key}="{escaped}"')
-        lines.append(f"  <a {' '.join(attributes)} />")
-    lines.append("</actor>")
-    return "\n".join(lines) + "\n"
 
 
 def print_suspicious_issues(issues: Iterable[Tuple[int, str]]) -> None:
@@ -529,35 +519,18 @@ def main() -> int:
         return 1
 
     has_format_diff = normalized_xml != normalized_original
-    simplified_path = xml_path.with_name("mapping_actor.xml")
-    simplified_xml: str | None = None
-    has_simplified_diff = False
-    if xml_path.name == "actor-mapping.xml":
-        simplified_xml = build_simplified_xml(normalized_xml)
-        has_simplified_diff = (
-            not simplified_path.exists()
-            or simplified_path.read_bytes() != simplified_xml.encode("utf-8")
-        )
-
     if args.write and has_format_diff:
         xml_path.write_text(normalized_xml, encoding="utf-8", newline="\n")
         print(f"Updated {xml_path}")
     elif has_format_diff:
         print(f"Formatting required: {xml_path}")
 
-    if simplified_xml is not None and has_simplified_diff:
-        if args.write:
-            simplified_path.write_text(simplified_xml, encoding="utf-8", newline="\n")
-            print(f"Updated {simplified_path}")
-        elif args.check:
-            print(f"Synchronization required: {simplified_path}")
-
     # Check escaped strings against normalized output to avoid false positives from formatting.
     suspicious_issues = find_suspicious_escapes(normalized_xml)
     print_suspicious_issues(suspicious_issues)
 
     if args.check:
-        format_failed = (has_format_diff or has_simplified_diff) and not args.write
+        format_failed = has_format_diff and not args.write
         if format_failed or suspicious_issues:
             return 1
 

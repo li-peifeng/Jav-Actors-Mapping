@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Merge AVDB SQLite/exports and legacy mapping sources without losing identities.
 
-Sources are read-only. Dry-run by default; --write updates the two repository XMLs.
+Sources are read-only. Dry-run by default; --write updates the full mapping XML.
 Legacy href/id fields are converted only here, never accepted by the formatter.
 """
 from __future__ import annotations
@@ -16,20 +16,20 @@ import sys
 from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 
-from format_actor_mapping import (
-    build_normalized_xml, build_simplified_xml, collect_blacklist_values,
+from format_full_mapping import (
+    ACTOR_TEXT_TRANSLATION, NAME_FIELDS, build_normalized_xml, collect_blacklist_values,
     find_suspicious_escapes, get_actor_node,
     validate_page_ids, validate_unique_tmdb_ids, validate_unique_actor_names,
 )
 
-NAME_FIELDS = ("zh_cn", "zh_tw", "jp")
 DATA_FIELDS = (*NAME_FIELDS, "keyword", "page_id", "tmdb_id", "bio_graphy", "dackdrop", "verified")
 PAGE_RE = re.compile(r"[A-Za-z0-9]{1,120}")
 
 
 def names(record: dict) -> set[str]:
-    return {value.strip() for value in [*(record.get(k, "") for k in NAME_FIELDS),
-                                       *record.get("keyword", "").split(",")] if value.strip()}
+    values = [*(record.get(k, "") for k in NAME_FIELDS), *record.get("keyword", "").split(",")]
+    normalized = (value.translate(ACTOR_TEXT_TRANSLATION).strip() for value in values)
+    return {value for value in normalized if value}
 
 
 def convert_record(record: dict) -> dict[str, str]:
@@ -286,11 +286,10 @@ def main() -> int:
     args = parser.parse_args()
     try:
         inputs = [args.xml, *args.sources]
-        outputs = [args.xml, args.xml.with_name("mapping_actor.xml")]
-        if args.report.resolve() in {p.resolve() for p in [*inputs, *outputs]}:
+        if args.report.resolve() in {p.resolve() for p in inputs}:
             raise ValueError("Report must not overwrite a source or mapping file")
-        if any(p.resolve() in {q.resolve() for q in outputs} for p in args.sources):
-            raise ValueError("Input sources must be separate from output mapping files")
+        if any(p.resolve() == args.xml.resolve() for p in args.sources):
+            raise ValueError("Input sources must be separate from the output mapping file")
         root = ET.fromstring(args.xml.read_text(encoding="utf-8"))
         actor = get_actor_node(root)
         validate_page_ids(actor)
@@ -316,7 +315,6 @@ def main() -> int:
         normalized = build_normalized_xml(ET.tostring(merged_root, encoding="unicode"))
         if find_suspicious_escapes(normalized):
             raise ValueError("Merged data contains suspicious escaped strings; no mappings written")
-        simplified = build_simplified_xml(normalized)
         final_entries = [dict(entry.attrib) for entry in get_actor_node(ET.fromstring(normalized))]
         original_coverage = audit_coverage(final_entries, originals)
         for report, records in zip(reports, source_records):
@@ -330,7 +328,6 @@ def main() -> int:
             raise ValueError(f"Coverage audit failed; no mappings written. See {args.report}")
         if args.write:
             args.xml.write_text(normalized, encoding="utf-8")
-            args.xml.with_name("mapping_actor.xml").write_text(simplified, encoding="utf-8")
         print(json.dumps({**result, "sources": [{**r, "issues": len(r["issues"])} for r in reports]}, ensure_ascii=False))
         return 0
     except (OSError, ValueError, ET.ParseError, sqlite3.Error) as exc:

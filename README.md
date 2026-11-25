@@ -23,11 +23,10 @@
 ## 仓库结构
 
 - actor-mapping.xml：演员映射数据文件（XML 格式）。
-- mapping_actor.xml：自动生成的精简映射表，根节点为 actor，仅保留 zh_cn、zh_tw、jp、keyword，使用两空格缩进，不包含外部 ID、简介、其他属性和黑名单。请维护源文件，不要手工修改此文件。
-- scripts/format_actor_mapping.py：映射格式化与校验脚本（natural 排序、转译字符串检查、同步精简映射表）。
+- scripts/format_full_mapping.py：完整映射表的格式化与校验脚本，包含自然排序、不可见字符清理和转义检查。
 - scripts/merge_avdb_mapping.py：只读合并 AVDB 数据库、导出 XML/JSON、旧映射 XML 和演员采集 JSON，支持预览、覆盖检查与合并报告。
-- scripts/resolve_duplicate_person_ids.py：补充 TMDB 重名演员，支持完整 XML 的嵌套结构，写入时同步精简表。
-- tests/test_mapping.py：页面 ID、合并、来源覆盖与精简表同步的回归测试。
+- scripts/resolve_duplicate_person_ids.py：补充 TMDB 重名演员，支持完整 XML 的嵌套结构。
+- tests/test_mapping.py：页面 ID、合并、来源覆盖和格式化的回归测试。
 - .github/workflows/actor-mapping-format.yml：自动化格式化与校验工作流。
 
 ## 贡献流程
@@ -48,17 +47,16 @@
 
 仓库已配置 actor-mapping.xml 的自动格式化与校验流程：
 
-1. 当 push 或 pull request 涉及任一 XML、格式化脚本或对应工作流时，工作流会自动触发。
+1. 当 push 或 pull request 涉及映射表、脚本、测试或对应工作流时，工作流会自动触发。
 2. pull request 场景执行严格校验：
   - 对 actor 内的条目进行 natural 排序。
   - 统一属性顺序为 zh_cn、zh_tw、jp、keyword、page_id、tmdb_id（简介等属性随后排列）。
   - 检查 page_id 格式，以及 page_id、tmdb_id 的唯一性。
-  - 检查 zh_cn、zh_tw、jp 的全表唯一性：同一名称可以出现在同一条记录的多个语言字段中，但不能出现在不同记录中，包括跨字段重复；忽略首尾空格和英文字母大小写，keyword 别名不参与唯一性校验。
+  - 清理零宽字符，将不换行空格转换为普通空格，再检查 zh_cn、zh_tw、jp 的全表唯一性。同一名称可以出现在同一条记录的多个语言字段中，忽略首尾空格和英文字母大小写；keyword 别名可由多条记录共用。
   - 检查并清理多余转译字符串（例如重复实体转义、数字实体转义、可疑反斜杠转义串）。
-  - 在工作区生成精简表，并检查源文件是否已规范格式化；贡献者只需修改 actor-mapping.xml，无需手工同步精简表。
-3. push 场景自动执行格式化，并同步生成 mapping_actor.xml；任一 XML 有变更时，将两个文件的变更一并自动提交回当前分支。
+3. push 场景自动格式化 actor-mapping.xml，有变更时提交回当前分支。
 
-`jzdxjk` 的自动审批与合并允许 PR 修改 actor-mapping.xml、mapping_actor.xml 中的任一文件或两者，但不允许夹带其他文件。贡献者仍可只提交源文件；自动合并成功后，工作流会在合并目标分支直接同步精简表并提交，无需向贡献者的 Fork 写入文件，也无需贡献者拥有本仓库的写权限。
+`jzdxjk` 的自动审批与合并只接受仅修改 actor-mapping.xml 的 PR。自动合并成功后，工作流在目标分支格式化并提交变更。
 
 ### 本地预检查
 
@@ -66,16 +64,16 @@
 
 ```bash
 python -m pip install pypinyin
-python scripts/format_actor_mapping.py --check actor-mapping.xml
+python scripts/format_full_mapping.py --check actor-mapping.xml
 ```
 
 如需本地直接格式化：
 
 ```bash
-python scripts/format_actor_mapping.py --write actor-mapping.xml
+python scripts/format_full_mapping.py --write actor-mapping.xml
 ```
 
-`--write` 会同时更新源文件所在目录下的 mapping_actor.xml，即使源文件已经符合格式，也会补建或更新精简表。`--check` 会检查源文件格式、转义字符串及精简表是否同步；需要同步时先执行上述 `--write` 命令再检查。
+`--write` 保存格式化后的完整表，`--check` 检查完整表的格式、转义字符串和身份唯一性。
 
 ### 演员页面 ID
 
@@ -86,7 +84,6 @@ python scripts/format_actor_mapping.py --write actor-mapping.xml
 - 不允许用不同页面 ID 保存重名条目。zh_cn、zh_tw、jp 中任一主名在全表只能归属一条记录；格式化、AVDB 合并及 CI 校验会拒绝重复，不会自动猜测应删除哪条资料。
 - 同一演员以主名和别名分别保存时，也需要清理重复：先用 TMDB 官方名称或别名确认身份，保留带 tmdb_id 和 bio_graphy 的完整条目，将其他名称放入 keyword，删除只有页面 ID 的重复条目。
 - 完整条目缺少 page_id 且重复条目只有一个明确页面 ID 时，可以补齐；已有页面 ID 不覆盖，多个候选页面 ID 不按遍历顺序选择。只有本地别名关联、缺少身份核验的条目保留待核查。
-- `mapping_actor.xml` 继续仅保留四个名称/别名字段，不包含页面 ID；需要页面 ID 时读取完整表。
 
 ### 合并 AVDB 与其他映射来源
 
@@ -95,7 +92,7 @@ python scripts/format_actor_mapping.py --write actor-mapping.xml
 ```bash
 python scripts/merge_avdb_mapping.py /path/to/avdb.db /path/to/legacy-mapping.xml /path/to/actor-all.json
 python scripts/merge_avdb_mapping.py /path/to/avdb.db /path/to/legacy-mapping.xml /path/to/actor-all.json --write
-python scripts/format_actor_mapping.py --check actor-mapping.xml
+python scripts/format_full_mapping.py --check actor-mapping.xml
 python -m unittest discover -s tests -v
 ```
 
@@ -108,9 +105,9 @@ python -m unittest discover -s tests -v
 - 不同的已知页面 ID 或 TMDB ID 不因共用别名而合并。归属不明确的记录保留为独立条目，并写入报告；不根据遍历顺序猜测演员。
 - 合并结果仍须通过主名全表唯一性校验；如果独立条目之间的 zh_cn、zh_tw、jp 重复，命令会失败并保留原文件，需要先核对和处理冲突后再写入。
 - 旧 XML 的标准 JavDB `href` 会转换为 `page_id`；`actor-all.json` 的 `id` 只有与标准 `href` 一致时才作为页面 ID。其他网站或格式错误的链接只记录到报告，保留演员资料，不猜测 ID。主名字段中误填的逗号分隔别名会拆分保留。
-- 所有来源先完成格式、ID 唯一性和覆盖检查，要求原表及每个来源的有效 ID、名称、别名均在结果中保留，才写入两个 XML。重复合并相同来源不应增加记录。
+- 格式、ID 唯一性和覆盖检查通过后，才写入 actor-mapping.xml。重复合并相同来源不应增加记录。
 
-Actions 会在映射文件、`scripts/` 或 `tests/` 变更时运行回归测试，并继续自动生成精简表。受信任贡献者的自动审批文件白名单仍限于两份 XML。
+Actions 会在映射文件、`scripts/` 或 `tests/` 变更时运行回归测试。
 
 ## 提交建议
 

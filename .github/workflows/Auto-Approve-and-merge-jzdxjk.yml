@@ -28,7 +28,7 @@ jobs:
         with:
           script: |
             const trustedContributor = 'jzdxjk'
-            const allowedFiles = new Set(['actor-mapping.xml', 'mapping_actor.xml'])
+            const allowedFiles = new Set(['actor-mapping.xml'])
 
             async function getPullRequest() {
               if (context.eventName === 'pull_request_target') {
@@ -98,7 +98,7 @@ jobs:
 
             core.info(`Changed files: ${changedFiles.join(', ')}`)
             if (!onlyAllowedFiles) {
-              core.info('PR changes files outside actor-mapping.xml and mapping_actor.xml; skipping.')
+              core.info('PR changes files outside actor-mapping.xml; skipping.')
               return
             }
 
@@ -162,14 +162,14 @@ jobs:
         if: steps.merge.outputs.base_ref != ''
         run: python -m pip install --upgrade pip pypinyin
 
-      - name: Format source and synchronize simplified mapping
+      - name: Format full mapping
         if: steps.merge.outputs.base_ref != ''
-        run: python scripts/format_actor_mapping.py --write --check actor-mapping.xml
+        run: python scripts/format_full_mapping.py --write --check actor-mapping.xml
 
-      - name: Commit synchronized mapping
+      - name: Commit formatting changes
         if: steps.merge.outputs.base_ref != ''
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           branch: ${{ steps.merge.outputs.base_ref }}
-          commit_message: 'chore: format actor mapping and sync simplified mapping'
-          file_pattern: actor-mapping.xml mapping_actor.xml
+          commit_message: 'chore: format actor mapping'
+          file_pattern: actor-mapping.xml

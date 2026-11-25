@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
-from format_actor_mapping import build_normalized_xml, build_simplified_xml, get_actor_node
+from format_full_mapping import build_normalized_xml, get_actor_node
 
 
 TMDB_API_BASE = "https://api.themoviedb.org/3"
@@ -240,12 +240,9 @@ def append_entries(xml_path: Path, entries: list[tuple[str, str]]) -> None:
     for name, person_id in entries:
         ET.SubElement(actor, "a", zh_cn=name, zh_tw=name, jp=name,
                       keyword=name, tmdb_id=person_id)
-    # Validate IDs and normalize everything before touching either output.
+    # Validate IDs and normalize everything before touching the mapping.
     normalized = build_normalized_xml(ET.tostring(root, encoding="unicode"))
-    simplified = build_simplified_xml(normalized)
     xml_path.write_text(normalized, encoding="utf-8")
-    if xml_path.name == "actor-mapping.xml":
-        xml_path.with_name("mapping_actor.xml").write_text(simplified, encoding="utf-8")
 
 
 def main() -> int:

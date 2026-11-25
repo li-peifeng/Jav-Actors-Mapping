@@ -8,7 +8,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from format_actor_mapping import build_normalized_xml, build_simplified_xml
+from format_full_mapping import build_normalized_xml
 from merge_avdb_mapping import audit_coverage, convert_record, load_source, merge_records, names
 from resolve_duplicate_person_ids import append_entries, collect_xml_names
 
@@ -29,22 +29,22 @@ class MappingTests(unittest.TestCase):
         build_normalized_xml('<actor><a zh_cn="甲" zh_tw="甲" jp="甲" keyword="共用别名"/><a zh_cn="乙" keyword="甲,共用别名"/></actor>')
 
     def test_name_uniqueness_uses_rendered_values_and_casefold(self):
-        for first, second in ((" RINA ", "rina"), ("A&amp;amp;B", "A&amp;B")):
+        for first, second in ((" RINA ", "rina"), ("A&amp;amp;B", "A&amp;B"), ("&#x200C;甲", "甲"), ("A&#160;B", "A B")):
             with self.subTest(first=first, second=second):
                 with self.assertRaisesRegex(ValueError, "Duplicate actor names"):
                     build_normalized_xml(f'<actor><a zh_cn="{first}"/><a jp="{second}"/></actor>')
 
-    def test_name_conflict_never_overwrites_either_output(self):
+    def test_name_conflict_never_overwrites_mapping(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "actor-mapping.xml"
             simple = path.with_name("mapping_actor.xml")
             path.write_text('<actor><a zh_cn="甲" page_id="One"/><a jp="甲" page_id="Two"/></actor>')
-            simple.write_text("unchanged")
-            before = path.read_bytes(), simple.read_bytes()
-            result = subprocess.run([sys.executable, "scripts/format_actor_mapping.py", "--write", str(path)], capture_output=True)
+            before = path.read_bytes()
+            result = subprocess.run([sys.executable, "scripts/format_full_mapping.py", "--write", str(path)], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(b"Duplicate actor names", result.stdout)
-            self.assertEqual((path.read_bytes(), simple.read_bytes()), before)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse(simple.exists())
 
     def test_merge_rejects_same_name_distinct_ids_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -52,24 +52,28 @@ class MappingTests(unittest.TestCase):
             simple = path.with_name("mapping_actor.xml")
             source = path.with_name("source.xml")
             path.write_text('<actor><a zh_cn="同名" page_id="One" tmdb_id="1"/></actor>')
-            simple.write_text("unchanged")
             source.write_text('<actor><a jp="同名" page_id="Two" tmdb_id="2"/></actor>')
-            before = path.read_bytes(), simple.read_bytes()
+            before = path.read_bytes()
             result = subprocess.run([
                 sys.executable, "scripts/merge_avdb_mapping.py", str(source), "--xml", str(path),
                 "--report", str(path.with_name("report.json")), "--write",
             ], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(b"Duplicate actor names", result.stderr)
-            self.assertEqual((path.read_bytes(), simple.read_bytes()), before)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse(simple.exists())
 
-    def test_page_ids_preserved_in_full_mapping_only(self):
+    def test_page_ids_preserved_in_full_mapping(self):
         full = build_normalized_xml('<actor><a zh_cn="演员" keyword="A&amp;B" page_id="k2Ne" tmdb_id="12"/></actor>')
         self.assertEqual(ET.fromstring(full).find(".//a").get("page_id"), "k2Ne")
         self.assertLess(full.index('page_id='), full.index('tmdb_id='))
-        simple = ET.fromstring(build_simplified_xml(full))
-        self.assertEqual(simple.tag, "actor")
-        self.assertEqual(simple[0].attrib, dict(zh_cn="演员", keyword="A&B"))
+        self.assertEqual(ET.fromstring(full).find(".//a").get("keyword"), "A&B")
+
+    def test_invisible_characters_are_cleaned_in_names_aliases_and_biography(self):
+        raw = '<actor><a zh_cn="甲&#x200B;&#x200C;&#x200D;&#x200E;&#x200F;" jp="&#xFEFF;甲" keyword="甲,&#x2060;Jane&#xA0;Doe" bio_graphy="word&#xAD;break&#xA0;here"/></actor>'
+        entry = ET.fromstring(build_normalized_xml(raw)).find(".//a")
+        self.assertEqual(entry.attrib, dict(zh_cn="甲", jp="甲", keyword="甲,Jane Doe", bio_graphy="wordbreak here"))
+        self.assertEqual(names(dict(zh_cn="\u200c甲", keyword="Jane\u00a0Doe")), {"甲", "Jane Doe"})
 
     def test_invalid_page_ids_and_duplicate_ids_fail(self):
         for value in ("", "../bad", "https://javdb.com/actors/A", "A B", "汉字", "x" * 121):
@@ -182,7 +186,7 @@ class MappingTests(unittest.TestCase):
             self.assertEqual([r["page_id"] for r in records], ["Ab"])
             self.assertEqual(path.read_bytes(), before)
 
-    def test_tmdb_tool_reads_nested_names_and_syncs_outputs(self):
+    def test_tmdb_tool_updates_only_the_full_mapping(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "actor-mapping.xml"
             path.write_text('<actor-mapping><actor><a zh_cn="甲" keyword="别名" page_id="Ab"/></actor><actor-blacklist>保护</actor-blacklist></actor-mapping>')
@@ -191,25 +195,26 @@ class MappingTests(unittest.TestCase):
             full = path.read_text()
             self.assertIn('page_id="Ab"', full)
             self.assertIn("保护", full)
-            self.assertEqual(path.with_name("mapping_actor.xml").read_text(), build_simplified_xml(full))
+            self.assertIn('tmdb_id="12"', full)
+            self.assertFalse(path.with_name("mapping_actor.xml").exists())
             before = path.read_bytes()
             with self.assertRaises(ValueError):
                 append_entries(path, [("丙", "12")])
             self.assertEqual(path.read_bytes(), before)
 
-    def test_invalid_source_never_overwrites_outputs(self):
+    def test_invalid_source_never_overwrites_mapping(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "actor-mapping.xml"
             simple = path.with_name("mapping_actor.xml")
             source = path.with_name("source.xml")
             path.write_text('<actor><a zh_cn="甲" page_id="Keep"/></actor>')
-            simple.write_text("sentinel")
             source.write_text('<actor><a zh_cn="乙" page_id="../bad"/></actor>')
-            before = path.read_bytes(), simple.read_bytes()
+            before = path.read_bytes()
             command = [sys.executable, "scripts/merge_avdb_mapping.py", str(source), "--xml", str(path), "--write"]
             result = subprocess.run(command, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertEqual((path.read_bytes(), simple.read_bytes()), before)
+            self.assertEqual(path.read_bytes(), before)
+            self.assertFalse(simple.exists())
 
 
 if __name__ == "__main__":
